@@ -17,10 +17,12 @@ describe('ng-http-circuitbreaker > ', function() {
 
         }));
 
+        //endPointRegEx, failureLimit, responseSLA, timeUntilHalfOpen, statusCodesToIgnore
+
         it('should allow single circuit definition', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,5,500,5000, [401,403,409]);
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]});
             });
             inject(function(ngHttpCircuitBreakerConfig) {
                 expect(ngHttpCircuitBreakerConfig.circuits).toBeDefined();
@@ -39,8 +41,8 @@ describe('ng-http-circuitbreaker > ', function() {
         it('should allow multiple circuit definitions', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,5,500,5000, [401,403,409])
-                    .circuit(/^\/api2\//i,10,1000,7500, [401,403]);
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]})
+                    .circuit({endPointRegEx: /^\/api2\//i, failureLimit: 10, responseSLA: 1000, timeUntilHalfOpen: 7500, statusCodesToIgnore: [401,403]});
             });
             inject(function(ngHttpCircuitBreakerConfig) {
                 expect(ngHttpCircuitBreakerConfig.circuits).toBeDefined();
@@ -65,7 +67,7 @@ describe('ng-http-circuitbreaker > ', function() {
         it('should provide default status codes to ignore', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,5,500,5000);
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000});
             });
             inject(function(ngHttpCircuitBreakerConfig) {
                 expect(ngHttpCircuitBreakerConfig.circuits).toBeDefined();
@@ -84,7 +86,7 @@ describe('ng-http-circuitbreaker > ', function() {
         it('should allow explicit listening for all status codes', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,5,500,5000, []);
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: []});
             });
             inject(function(ngHttpCircuitBreakerConfig) {
                 expect(ngHttpCircuitBreakerConfig.circuits).toBeDefined();
@@ -97,25 +99,107 @@ describe('ng-http-circuitbreaker > ', function() {
 
         });
 
+        it('should require status codes to ignore be an array', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, statusCodesToIgnore: 401})).toThrow('Invalid statusCodesToIgnore - expecting array of integer values representing HTTP response codes');
+            });
+        });
+
         it('should not allow a zero failure limit', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 expect(ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,0,500,5000, [])).toThrow('Invalid failure limit - must be positive, non-zero value');
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 0, responseSLA: 500, timeUntilHalfOpen:5000, statusCodesToIgnore: []})).toThrow('Invalid failure limit - must be positive, non-zero value');
             });
         });
 
         it('should not allow a negative failure limit', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 expect(ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,-1,500,5000, [])).toThrow('Invalid failure limit - must be positive, non-zero value');
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: -1, responseSLA: 500, timeUntilHalfOpen:5000, statusCodesToIgnore: []})).toThrow('Invalid failure limit - must be positive, non-zero value');
+            });
+        });
+
+        it('should not allow a non-numeric failure limit', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 'bad'})).toThrow('Invalid failure limit - must be positive, non-zero value');
+            });
+        });
+
+        it('should not allow a negative response sla', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, responseSLA: -250})).toThrow('Invalid Response SLA - must be non-negative. Set to 0 if you do not want a response sla to be set.');
+            });
+        });
+
+        it('should not allow a non-numeric response sla', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, responseSLA: 'bad'})).toThrow('Invalid Response SLA - must be non-negative. Set to 0 if you do not want a response sla to be set.');
+            });
+        });
+
+        it('should allow user to explicitly bypass response SLAs', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, responseSLA: 0});
+            });
+            inject(function(ngHttpCircuitBreakerConfig) {
+                expect(ngHttpCircuitBreakerConfig.circuits[0].failureLimit).toBe(5);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].responseSLA).toBe(0);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].timeUntilHalfOpen).toBe(5000);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.length).toBe(3);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(401)).not.toBe(-1);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(403)).not.toBe(-1);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(409)).not.toBe(-1);
+            });
+        });
+
+        it('should not allow a negative time until half open', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, timeUntilHalfOpen: -5000})).toThrow('Invalid Circuit timeUntilHalfOpen - must be a positive non-zero integer value');
+            });
+        });
+
+        it('should not allow a non-numeric time until half open', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, timeUntilHalfOpen: 'bad'})).toThrow('Invalid Circuit timeUntilHalfOpen - must be a positive non-zero integer value');
+            });
+        });
+
+        it('should not allow a zero time until half open', function() {
+            module(function(ngHttpCircuitBreakerConfigProvider) {
+                expect(ngHttpCircuitBreakerConfigProvider
+                    .circuit({endPointRegEx: /^\/api\//i, timeUntilHalfOpen: 0})).toThrow('Invalid Circuit timeUntilHalfOpen - must be a positive non-zero integer value');
+            });
+        });
+
+        it('should provide default values for all configs except for endpoint', function() {
+           module(function(ngHttpCircuitBreakerConfigProvider) {
+               ngHttpCircuitBreakerConfigProvider
+                   .circuit({endPointRegEx: /^\/api\//i});
+           });
+
+            inject(function(ngHttpCircuitBreakerConfig) {
+                expect(ngHttpCircuitBreakerConfig.circuits[0].failureLimit).toBe(5);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].responseSLA).toBe(500);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].timeUntilHalfOpen).toBe(5000);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.length).toBe(3);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(401)).not.toBe(-1);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(403)).not.toBe(-1);
+                expect(ngHttpCircuitBreakerConfig.circuits[0].statusCodesToIgnore.indexOf(409)).not.toBe(-1);
             });
         });
 
         it('should not allow identical circuit endpoints', function() {
             module(function(ngHttpCircuitBreakerConfigProvider) {
                 expect(ngHttpCircuitBreakerConfigProvider
-                    .circuit(/^\/api\//i,5,500,5000, [401,403,409])
-                    .circuit(/^\/api\//i,5,500,5000, [401, 403, 409])
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]})
+                    .circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]})
                 ).toThrow('Duplicate endpoint regular expression found');
             });
         })
@@ -175,7 +259,7 @@ describe('ng-http-circuitbreaker > ', function() {
         }));
         beforeEach(
             module(function(ngHttpCircuitBreakerConfigProvider, $httpProvider) {
-                ngHttpCircuitBreakerConfigProvider.circuit(/^\/api\//i,5,500,5000,[401,403,409]);
+                ngHttpCircuitBreakerConfigProvider.circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]});
                 $httpProvider.interceptors.push('ngHttpCircuitBreaker');
         }));
 

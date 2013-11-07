@@ -62,34 +62,74 @@
         /**
          * The ngHttpCircuitBreakerConfigProvider provides a circuit method which can be chained to define the HTTP routes that should be encapsulated as circuits behind the circuit breaker http transform.
          *
-         * @param endPointRegEx - A regular expression to match the URL of the $http request config
-         * @param failureLimit - The number of error responses you'll accept before you want to OPEN the circuit
-         * @param responseSLA - The maximum response time (in ms) deemed acceptable before forcing an active request to timeout
-         * @param timeUntilHalfOpen - The time (in ms) an OPEN circuit should wait until moving to the HALF-OPEN state
-         * @param statusCodesToIgnore - An array of HTTP Status Codes to ignore - leave null to accept the defaults of [401, 403, 409]
+         * @param circuitConfig.endPointRegEx -         (REQUIRED) A regular expression to match the URL of the $http request config
+         * @param circuitConfig.failureLimit -          (OPTIONAL: Default = 5) The number of error responses you'll accept before you want to OPEN the circuit.
+         * @param circuitConfig.responseSLA -           (OPTIONAL: Default = 500) The maximum response time (in ms) deemed acceptable before forcing an active request to timeout. Set to 0 if you do not want an SLA timeout injected into your circuit's calls.
+         * @param circuitConfig.timeUntilHalfOpen -     (OPTIONAL: Default = 5000) The time (in ms) an OPEN circuit should wait until moving to the HALF-OPEN state.
+         * @param circuitConfig.statusCodesToIgnore -   (OPTIONAL: Default = [401, 403, 409]) An array of HTTP Status Codes to ignore.
          * @returns {ngHttpCircuitBreakerProvider}
          */
-        this.circuit = function circuit(endPointRegEx, failureLimit, responseSLA, timeUntilHalfOpen, statusCodesToIgnore) {
-            if(failureLimit <= 0) {
-                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Invalid failure limit - must be positive, non-zero value'};
+        this.circuit = function circuit(circuitConfig) {
+            if(!circuitConfig) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Circuit Config required'};
             }
 
+            if(!circuitConfig.endPointRegEx) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Circuit Endpoint Regular Expression required'};
+            }
+
+            if(!circuitConfig.endPointRegEx.test) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Circuit Parameter endPointRegEx must be a regular expression'};
+            }
 
             for(var i = 0; i < config.circuits.length; i++) {
-                if(config.circuits[i].endPointRegEx.toString().toUpperCase() === endPointRegEx.toString().toUpperCase()) {
+                if(config.circuits[i].endPointRegEx.toString().toUpperCase() === circuitConfig.endPointRegEx.toString().toUpperCase()) {
                     throw {source: 'ngHttpCircuitBreakerConfig', message: 'Duplicate endpoint regular expression found'};
                 }
             }
-            // Inject some default status codes to ignore if none are specified by the caller
-            if(statusCodesToIgnore == null) {
-                statusCodesToIgnore = [401,403,409];
+
+            // default to 5
+            if(isNaN(circuitConfig.failureLimit)) {
+                circuitConfig.failureLimit = 5;
             }
+
+            if(circuitConfig.failureLimit <= 0) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Invalid failure limit - must be positive, non-zero value'};
+            }
+
+            // default to 500
+            if(isNaN(circuitConfig.responseSLA)) {
+                circuitConfig.responseSLA = 500;
+            }
+
+            if(circuitConfig.responseSLA < 0) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Invalid Response SLA - must be non-negative. Set to 0 if you do not want a response sla to be set.'};
+            }
+
+            // default to 5 seconds
+            if(isNaN(circuitConfig.timeUntilHalfOpen)) {
+                circuitConfig.timeUntilHalfOpen = 5000;
+            }
+
+            if(circuitConfig.timeUntilHalfOpen <= 0) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Invalid Circuit timeUntilHalfOpen - must be a positive non-zero integer value'};
+            }
+
+            // Inject some default status codes to ignore if none are specified by the caller. Ignore auth & validation error codes.
+            if(!circuitConfig.statusCodesToIgnore) {
+                circuitConfig.statusCodesToIgnore = [401,403,409];
+            }
+
+            if(!Array.isArray(circuitConfig.statusCodesToIgnore)) {
+                throw {source: 'ngHttpCircuitBreakerConfig', message: 'Invalid statusCodesToIgnore - expecting array of integer values representing HTTP response codes'};
+            }
+
             config.circuits.push({
-                endPointRegEx: endPointRegEx,
-                failureLimit: failureLimit,
-                responseSLA: responseSLA,
-                timeUntilHalfOpen: timeUntilHalfOpen,
-                statusCodesToIgnore: statusCodesToIgnore,
+                endPointRegEx: circuitConfig.endPointRegEx,
+                failureLimit: circuitConfig.failureLimit,
+                responseSLA: circuitConfig.responseSLA,
+                timeUntilHalfOpen: circuitConfig.timeUntilHalfOpen,
+                statusCodesToIgnore: circuitConfig.statusCodesToIgnore,
                 STATE: 0,       // closed state
                 failureCount: 0 // initial failure count
             });
@@ -113,8 +153,8 @@
 
                         if (circuit.STATE === 0 || circuit.STATE === 1) {
 
-                            // Inject the SLA timeout
-                            if(cktConfig.circuits[i].responseSLA) {
+                            // Inject the SLA timeout only if it is a number and is greater than 0
+                            if(cktConfig.circuits[i].responseSLA > 0) {
                                 config.timeout = cktConfig.circuits[i].responseSLA;
                             }
 
@@ -133,7 +173,7 @@
                 }
                 return config || $q.when(config);
             },
-            response: function response(response) {
+            response: function (response) {
                 if(response.config.cktbkr) {
                     var circuit = cktConfig.circuits[response.config.cktbkr.circuit];
                     if (circuit.STATE === 2) {

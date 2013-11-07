@@ -9,7 +9,7 @@ module.exports = function(config) {
     basePath: '../',
     frameworks: ['jasmine'],
     reporters: ['progress'],
-    browsers: ['Chrome'],
+    browsers: ['PhantomJS'],
     autoWatch: false,
     singleRun: true,
     colors: true
