@@ -22,7 +22,11 @@
  *  5) status codes to ignore - an array of HTTP failure status codes that should be ignored (such as 401 - Authorization Required)
  *
  * Your client application must be designed to gracefully handle error responses - once tripped the circuit breaker will
- * reject all requests immediately.
+ * reject all requests immediately until the half-open time has elapsed. At that point it will allow a single request to pass through
+ * to the backend server - while that request is waiting for a response the circuit will transition back to the OPEN state and reject all requests.
+ * If the single request that went through during the half open state responds successfully, the circuit will immediately move to the CLOSED state
+ * and allow all requests to go through again.
+ *
  *
  *
  * The MIT License (MIT)
@@ -54,6 +58,11 @@
 
     var module = angular.module('ng-http-circuitbreaker', []);
     module.provider('ngHttpCircuitBreakerConfig', ngHttpCircuitBreakerProvider);
+
+    // Circuit State constants
+    var STATE_CLOSED = 0,
+        STATE_HALF_OPEN = 1,
+        STATE_OPEN = 2;
 
     function ngHttpCircuitBreakerProvider() {
         var config = {
@@ -130,7 +139,7 @@
                 responseSLA: circuitConfig.responseSLA,
                 timeUntilHalfOpen: circuitConfig.timeUntilHalfOpen,
                 statusCodesToIgnore: circuitConfig.statusCodesToIgnore,
-                STATE: 0,       // closed state
+                STATE: STATE_CLOSED,       // closed state
                 failureCount: 0 // initial failure count
             });
             return this;
@@ -151,7 +160,7 @@
                             circuit: i
                         };
 
-                        if (circuit.STATE === 0 || circuit.STATE === 1) {
+                        if (circuit.STATE === STATE_CLOSED || circuit.STATE === STATE_HALF_OPEN) {
 
                             // Inject the SLA timeout only if it is a number and is greater than 0
                             if(cktConfig.circuits[i].responseSLA > 0) {
@@ -159,12 +168,12 @@
                             }
 
                             // We only want to allow one attempt, so set state back to OPEN - if this call succeeds it will set state to CLOSED
-                            if(circuit.STATE === 1) {
-                                circuit.STATE = 2;
+                            if(circuit.STATE === STATE_HALF_OPEN) {
+                                circuit.STATE = STATE_OPEN;
                             }
                             // Don't look for more circuits
                             break;
-                        } else if (circuit.STATE === 2) {
+                        } else if (circuit.STATE === STATE_OPEN) {
                             // open state, reject everything
                             // todo: Do something here to indicate the failure is circuit breaker related ??
                             return $q.reject(config);
@@ -176,10 +185,10 @@
             response: function (response) {
                 if(response.config.cktbkr) {
                     var circuit = cktConfig.circuits[response.config.cktbkr.circuit];
-                    if (circuit.STATE === 2) {
+                    if (circuit.STATE === STATE_OPEN) {
                         // circuit is currently open, which means this is the one request that made it through during the half-open transition
                         // since it is successful, set the state to CLOSED and reset failure count
-                        circuit.STATE = 0;
+                        circuit.STATE = STATE_CLOSED;
                         circuit.failureCount = 0;
                     } else if(circuit.failureCount > 0) {
                         // only decrement the failure count if it's greater than zero
@@ -205,10 +214,10 @@
                     circuit.failureCount += 1;
                     if (circuit.failureCount >= circuit.failureLimit) {
                         // Breached failure limit, set the circuit to OPEN state
-                        circuit.STATE = 2;
+                        circuit.STATE = STATE_OPEN;
                         // Create a timeout that will set the circuit to half open based upon the half open time specified by the circuit
                         $timeout(function () {
-                            circuit.STATE = 1;
+                            circuit.STATE = STATE_HALF_OPEN;
                         }, circuit.timeUntilHalfOpen);
                     }
                 }
