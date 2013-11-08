@@ -443,7 +443,7 @@ describe('ng-http-circuitbreaker > ', function() {
             expect(cktConfig.circuits[0].failureCount).toBe(6);
         });
 
-        it('should move to half-open, fail and stay closed, and then moved to half-open again', function() {
+        it('should move to half-open, fail and stay closed, and then move to half-open again', function() {
             expect(cktConfig.circuits[0].failureCount).toBe(0);
             createFailedHttpCalls(5);
             $httpBackend.flush();

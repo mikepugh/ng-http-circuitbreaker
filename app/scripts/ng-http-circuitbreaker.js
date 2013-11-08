@@ -137,6 +137,7 @@
                 timeUntilHalfOpen: circuitConfig.timeUntilHalfOpen,
                 statusCodesToIgnore: circuitConfig.statusCodesToIgnore,
                 STATE: STATE_CLOSED,       // closed state
+                timerSet: false,
                 failureCount: 0 // initial failure count
             });
             return this;
@@ -148,11 +149,12 @@
 
     module.provider('ngHttpCircuitBreakerConfig', ngHttpCircuitBreakerProvider);
 
-    module.factory('ngHttpCircuitBreaker', ['ngHttpCircuitBreakerConfig', '$q', '$timeout', function(cktConfig, $q, $timeout) {
+    module.factory('ngHttpCircuitBreaker', ['ngHttpCircuitBreakerConfig', '$q', '$timeout', '$log', function(cktConfig, $q, $timeout, $log) {
         return {
             request: function request(config) {
                 for (var i = 0; i < cktConfig.circuits.length; i++) {
                     if (cktConfig.circuits[i].endPointRegEx.test(config.url)) {
+                        $log.info('Circuit Breaker protecting ' + config.url);
                         var circuit = cktConfig.circuits[i];
                         // To save on lookup times on response processing, add the circuit index to the config object which will be included within the response
                         config.cktbkr = {
@@ -168,6 +170,7 @@
 
                             // We only want to allow one attempt, so set state back to OPEN - if this call succeeds it will set state to CLOSED
                             if(circuit.STATE === STATE_HALF_OPEN) {
+                                $log.warn('Circuit breaker is HALF-OPEN - allowing request for ' + config.url + ' through');
                                 circuit.STATE = STATE_OPEN;
                             }
                             // Don't look for more circuits
@@ -175,6 +178,7 @@
                         } else if (circuit.STATE === STATE_OPEN) {
                             // open state, reject everything
                             // todo: Do something here to indicate the failure is circuit breaker related ??
+                            $log.error('Circuit breaker for ' + config.url + ' is OPEN - short circuiting request');
                             return $q.reject(config);
                         }
                     }
@@ -185,6 +189,7 @@
                 if(response.config.cktbkr) {
                     var circuit = cktConfig.circuits[response.config.cktbkr.circuit];
                     if (circuit.STATE === STATE_OPEN) {
+                        $log.info('Circuit breaker detected successful call to ' + response.config.url + ' - closing circuit');
                         // circuit is currently open, which means this is the one request that made it through during the half-open transition
                         // since it is successful, set the state to CLOSED and reset failure count
                         circuit.STATE = STATE_CLOSED;
@@ -202,22 +207,28 @@
                 if (response.config && response.config.cktbkr) {
                     var circuit = cktConfig.circuits[response.config.cktbkr.circuit];
                     // determine if the status code should be ignored
-                    for (var i = 0; i < circuit.statusCodesToIgnore.length; i++) {
-                        if (response.status === circuit.statusCodesToIgnore[i]) {
-                            return $q.reject(response);
-                        }
+                    if(circuit.statusCodesToIgnore.indexOf(response.status) !== -1) {
+                        $log.info('Circuit breaker ignoring status code ' + response.status + ' for circuit ' + response.config.url);
+                        return $q.reject(response);
                     }
 
                     // The status code is in the failure range (4xx, 5xx) and isn't an ignored status code
                     // so increment the failure count and check against the failure limit
                     circuit.failureCount += 1;
                     if (circuit.failureCount >= circuit.failureLimit) {
+                        $log.error('Circuit breaker limit reached for circuit ' + circuit.endPointRegEx.toString() + ' with failed request to ' + response.config.url + ' with code ' + response.status);
                         // Breached failure limit, set the circuit to OPEN state
                         circuit.STATE = STATE_OPEN;
                         // Create a timeout that will set the circuit to half open based upon the half open time specified by the circuit
-                        $timeout(function () {
-                            circuit.STATE = STATE_HALF_OPEN;
-                        }, circuit.timeUntilHalfOpen);
+                        // we only want to have one timer active per circuit though so check timerSet flag
+                        if(!circuit.timerSet) {
+                            $timeout(function () {
+                                $log.warn('Circuit breaker switching to HALF-OPEN status for circuit ' + circuit.endPointRegEx.toString());
+                                circuit.STATE = STATE_HALF_OPEN;
+                                circuit.timerSet = false;   // Allow a new timer to be set if needed
+                            }, circuit.timeUntilHalfOpen);
+                        }
+                        circuit.timerSet = true;
                     }
                 }
                 // return the response back to the client for handling
