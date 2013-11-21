@@ -4,6 +4,47 @@
 
 describe('ng-http-circuitbreaker > ', function() {
 
+    var $http;
+
+    var stableSpy = {
+        success: function() {},
+        failure: function() {},
+        then: function() {}
+    };
+
+    var unstableSpy = {
+        success: function() {},
+        failure: function() {},
+        then: function() {}
+    }
+
+
+
+    var createFailedHttpCalls = function createFailedHttpCalls(n) {
+        for(var i = 0; i < n; i++) {
+            $http.get('/api/unstable')
+                .success(unstableSpy.success)
+                .error(unstableSpy.failure);
+        }
+    };
+
+    var createSuccessfulHttpCalls = function createSuccessfulHttpCalls(n) {
+        for(var i = 0; i < n; i++) {
+            $http.get('/api/stable')
+                .success(stableSpy.success)
+                .error(stableSpy.failure);
+        }
+    };
+
+    var createAuthHttpCalls = function createAuthHttpCalls(n) {
+        for(var i = 0; i < n; i++) {
+            $http.get('/api/auth')
+                .success(stableSpy.success)
+                .error(stableSpy.failure);
+        }
+    };
+
+
     describe('circuit provider > ', function() {
 
         beforeEach(module('ng-http-circuitbreaker', function($provide, $httpProvider, ngHttpCircuitBreakerConfigProvider) {
@@ -13,8 +54,8 @@ describe('ng-http-circuitbreaker > ', function() {
 
         it('should inject ngHttpCircuitBreakerConfig with default setup', inject(function(ngHttpCircuitBreakerConfig) {
             expect(ngHttpCircuitBreakerConfig.circuits).toBeDefined();
-            expect(ngHttpCircuitBreakerConfig.circuits.length).toBe(0);
 
+            expect(ngHttpCircuitBreakerConfig.circuits.length).toBe(0);
         }));
 
         //endPointRegEx, failureLimit, responseSLA, timeUntilHalfOpen, statusCodesToIgnore
@@ -206,51 +247,78 @@ describe('ng-http-circuitbreaker > ', function() {
 
     });
 
+    describe('circuit stats > ', function() {
+       var $httpBackend,
+           $rootScope,
+           $timeout,
+           ckgConfig,
+           ckt,
+           cktStats;
+
+        beforeEach(module('ng-http-circuitbreaker', function($provide, ngHttpCircuitBreakerConfigProvider) {
+            $provide.provider('ngHttpCircuitBreakerConfig', ngHttpCircuitBreakerConfigProvider);
+            //$provide.provider('$http', $httpProvider);
+        }));
+        beforeEach(
+            module(function(ngHttpCircuitBreakerConfigProvider, $httpProvider) {
+                ngHttpCircuitBreakerConfigProvider.circuit({endPointRegEx: /^\/api\//i, failureLimit: 5, responseSLA: 500, timeUntilHalfOpen: 5000, statusCodesToIgnore: [401,403,409]});
+                $httpProvider.interceptors.push('ngHttpCircuitBreaker');
+            }));
+
+        beforeEach(inject(function($injector) {
+
+            // angular services & mocks
+            $http = $injector.get('$http');
+            $rootScope = $injector.get('$rootScope');
+            $timeout = $injector.get('$timeout');
+
+            // circuit breaker objects
+            cktConfig = $injector.get('ngHttpCircuitBreakerConfig');
+            ckt = $injector.get('ngHttpCircuitBreaker');
+
+            cktStats = $injector.get('ngHttpCircuitBreakerStats');
+
+        }));
+
+        beforeEach(inject(function(_$httpBackend_) {
+            $httpBackend = _$httpBackend_;
+            $httpBackend.whenGET('/api/unstable').respond(function() {
+                return [500, 'App Error'];
+            });
+            $httpBackend.whenGET('/ApI/uNsTAbLe').respond(function() {
+                return [500, 'App Error'];
+            });
+            $httpBackend.whenGET('/api/stable').respond(function() {
+                return [200, 'OK'];
+            });
+            $httpBackend.whenGET('/api/auth').respond(function() {
+                return [401, 'Auth Required'];
+            });
+            $httpBackend.whenGET('/twitter/api').respond(function() {
+                return [200, 'OK'];
+            });
+        }));
+
+        it('should start stats in a clean state', function() {
+            expect(cktStats).toBeDefined();
+            expect(cktStats.totalCalls).toBe(0);
+            expect(cktStats.totalFailedCalls).toBe(0);
+            expect(cktStats.totalSuccessfulCalls).toBe(0);
+            expect(cktStats.totalIgnoredFailureResponses).toBe(0);
+            expect(cktStats.circuits).toBeDefined();
+            expect(cktStats.circuits.length).toBe(1);
+        });
+        
+        
+    });
+
     describe('circuit breaker > ', function() {
 
-        var $http,
-            $httpBackend,
+        var $httpBackend,
             $rootScope,
             $timeout,
             cktConfig,
             ckt;
-
-        var stableSpy = {
-            success: function() {},
-            failure: function() {},
-            then: function() {}
-        };
-
-        var unstableSpy = {
-            success: function() {},
-            failure: function() {},
-            then: function() {}
-        }
-
-        var createFailedHttpCalls = function createFailedHttpCalls(n) {
-            for(var i = 0; i < n; i++) {
-                $http.get('/api/unstable')
-                    .success(unstableSpy.success)
-                    .error(unstableSpy.failure);
-            }
-        };
-
-        var createSuccessfulHttpCalls = function createSuccessfulHttpCalls(n) {
-            for(var i = 0; i < n; i++) {
-                $http.get('/api/stable')
-                    .success(stableSpy.success)
-                    .error(stableSpy.failure);
-            }
-        };
-
-        var createAuthHttpCalls = function createAuthHttpCalls(n) {
-            for(var i = 0; i < n; i++) {
-                $http.get('/api/auth')
-                    .success(stableSpy.success)
-                    .error(stableSpy.failure);
-            }
-        };
-
 
 
         beforeEach(module('ng-http-circuitbreaker', function($provide, ngHttpCircuitBreakerConfigProvider) {
@@ -495,6 +563,29 @@ describe('ng-http-circuitbreaker > ', function() {
 
             expect(cktConfig.circuits[0].STATE).toBe(0);
             expect(cktConfig.circuits[0].failureCount).toBe(1);
+        });
+
+        it('should set the timer flag', function() {
+            expect(cktConfig.circuits[0].timerSet).toBeFalsy();
+            createFailedHttpCalls(4);
+            $httpBackend.flush();
+            expect(cktConfig.circuits[0].timerSet).toBeFalsy();
+            createFailedHttpCalls(1);
+            $httpBackend.flush();
+            expect(cktConfig.circuits[0].timerSet).toBeTruthy();
+
+        });
+
+        it('should clear the timer flag after time until half open', function() {
+            expect(cktConfig.circuits[0].timerSet).toBeFalsy();
+            createFailedHttpCalls(4);
+            $httpBackend.flush();
+            expect(cktConfig.circuits[0].timerSet).toBeFalsy();
+            createFailedHttpCalls(1);
+            $httpBackend.flush();
+            expect(cktConfig.circuits[0].timerSet).toBeTruthy();
+            $timeout.flush();
+            expect(cktConfig.circuits[0].timerSet).toBeFalsy();
         });
 
 
